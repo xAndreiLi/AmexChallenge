@@ -3,9 +3,31 @@
 // However, you must not change the surface API presented from this file,
 // and you should not need to change any other files in the project to complete the challenge
 
+import { useEffect, useRef, useState } from "react";
+
+// Data Type representing an object contained in the array fetched from randomapi
+export interface Person {
+  first: string;
+  last: string;
+  email: string;
+  address: string;
+  created: string;
+  balance: string;
+}
+// For response data type validation
+const personKeyRecord: Record<keyof Person, true> = {
+  first: true,
+  last: true,
+  email: true,
+  address: true,
+  created: true,
+  balance: true,
+};
+const personKeySet = new Set(Object.keys(personKeyRecord));
+
 type UseCachingFetch = (url: string) => {
   isLoading: boolean;
-  data: unknown;
+  data: Person[]; // Changed the return type of our hook to conform to our defined data type
   error: Error | null;
 };
 
@@ -27,15 +49,91 @@ type UseCachingFetch = (url: string) => {
  * 4. This file passes a type-check.
  *
  */
+
+let cache: Person[] = [];
+
 export const useCachingFetch: UseCachingFetch = (url) => {
+  console.log("[useCachingFetch] Hook called");
+  const isPreloaded = cache.length != 0;
+  const [data, setData] = useState<Person[]>(cache); // Default set to load cache if available
+  const [isLoading, setIsLoading] = useState(!isPreloaded); // Default false if cache is available so server html renders
+  const errorRef = useRef<Error | null>(null);
+
+  useEffect(() => {
+    const tryFetchData = async () => {
+      try {
+        setIsLoading(true);
+        await fetchData(url).then((res) => setData(res));
+      } catch (err) {
+        const error = err as Error;
+        errorRef.current = error;
+      }
+    };
+
+    if (!isPreloaded) {
+      tryFetchData();
+    }
+    if (isLoading) {
+      setIsLoading(false);
+    }
+  }, [data]);
+
   return {
-    data: null,
-    isLoading: false,
-    error: new Error(
-      'UseCachingFetch has not been implemented, please read the instructions in DevTask.md',
-    ),
+    data,
+    isLoading,
+    error: errorRef.current,
   };
 };
+
+// Function that fetches from url and returns a validated data object asynchronously
+const fetchData = async (url: string): Promise<Person[]> => {
+  let data: unknown = undefined;
+  // API response returns a ReadableStream, so we need to decode and parse it
+  await fetch(url).then(async (res) => {
+    if (!res || !res.body) {
+      throw new Error(`[fetchData] No response recieved from ${url}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      const chunk = decoder.decode(value, { stream: true });
+      data = JSON.parse(chunk);
+    }
+  });
+
+  // Validate that the data is an array to filter for valid elements
+  if (!Array.isArray(data)) {
+    throw new Error(
+      "[fetchData] API Response data is not in the proper format (array)"
+    );
+  }
+
+  // Validate elements to create typed Person[]
+  const personData = data.filter((object) => isPerson(object));
+  // Cache data and return
+  console.log("[fetchData] Data successfully cached");
+  cache = personData;
+  return personData;
+};
+
+// Validates that an unknown is a valid JavaScript Object
+function isValidObject(object: unknown): object is object {
+  return typeof object === "object" && !Array.isArray(object);
+}
+
+// Validates that response data has keys matching our Person data type
+function isPerson(object: unknown): object is Person {
+  if (!isValidObject(object)) {
+    return false;
+  }
+  const keys = Object.keys(object);
+  return keys.every((key) => personKeySet.has(key));
+}
 
 /**
  * 2. Implement a preloading caching fetch function. The function should fetch the data.
@@ -51,10 +149,10 @@ export const useCachingFetch: UseCachingFetch = (url) => {
  * 3. This file passes a type-check.
  *
  */
+
 export const preloadCachingFetch = async (url: string): Promise<void> => {
-  throw new Error(
-    'preloadCachingFetch has not been implemented, please read the instructions in DevTask.md',
-  );
+  console.log("[preloadCachingFetch] Preloading cache");
+  await fetchData(url);
 };
 
 /**
@@ -73,8 +171,14 @@ export const preloadCachingFetch = async (url: string): Promise<void> => {
  * 4. This file passes a type-check.
  *
  */
-export const serializeCache = (): string => '';
+export const serializeCache = (): string => {
+  return JSON.stringify(cache);
+};
 
-export const initializeCache = (serializedCache: string): void => {};
+export const initializeCache = (serializedCache: string): void => {
+  cache = JSON.parse(serializedCache);
+};
 
-export const wipeCache = (): void => {};
+export const wipeCache = (): void => {
+  cache = [];
+};
